@@ -1,5 +1,4 @@
 import google.generativeai as genai
-import json
 import os
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
@@ -41,6 +40,8 @@ def extract_activities(message):
     3. Each activity should be a clear, concise string
     4. If no activities are found, return an empty list
     5. Ignore filler words and focus on actionable items
+    6. The activities must be a max of 3 words
+    7. I want the activity name only, not the associated verb
 
     Input Message: {message}
 
@@ -66,14 +67,3 @@ def extract_activities(message):
     except Exception as e:
         print(f"An error occurred: {e}")
         return {"activities": []}
-
-
-def main():
-    message = "Uh I want to wake up at five, then solve a leetcode and then uh I'll go for a run. And then I'm gonna go to boxing class. Then uh after college, I want to uh study a little bit of system design. And then I want to record the drums for too sweet and then the guitar for too sweet. And that's it. That's going to be my day."
-
-    activities_json = extract_activities(message)
-    print(json.dumps(activities_json, indent=2))
-
-
-if __name__ == "__main__":
-    main()
