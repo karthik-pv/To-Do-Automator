@@ -1,5 +1,6 @@
 import google.generativeai as genai
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -32,6 +33,7 @@ def extract_activities(message):
     """
 
     template = """
+    Todays date is {date}
     You are a precise assistant designed to extract all activities from a user's message.
     
     STRICT REQUIREMENTS:
@@ -42,14 +44,15 @@ def extract_activities(message):
     5. Ignore filler words and focus on actionable items
     6. The activities must be a max of 3 words
     7. I want the activity name only, not the associated verb
+    8. Capture the date of the activity as well.....if not mentioned by default it is the next day (send back the date in the format dd-mm-yy)
 
     Input Message: {message}
 
     JSON Output Format:
     {{
       "activities": [
-        "activity 1",
-        "activity 2",
+        {{"activity" :"activity 1" , "date" : "date_of_activity"}},
+        {{"activity" :"activity 2" , "date" : "date_of_activity"}},
         ...
       ]
     }}
@@ -60,7 +63,9 @@ def extract_activities(message):
     activity_extractor = RunnablePassthrough() | prompt | llm | JsonOutputParser()
 
     try:
-        result = activity_extractor.invoke({"message": message})
+        result = activity_extractor.invoke(
+            {"message": message, "date": datetime.now()},
+        )
 
         return {"activities": result.get("activities", [])}
 
