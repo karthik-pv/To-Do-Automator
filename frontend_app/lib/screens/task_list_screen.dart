@@ -19,6 +19,7 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   final TextEditingController _taskController = TextEditingController();
   bool _isAddingTask = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -72,6 +73,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
             actions: [
               IconButton(
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                onPressed: (appProvider.isLoading || _isLoading) ? null : () async {
+                  await appProvider.refreshData();
+                },
+              ),
+              IconButton(
                 icon: const Icon(Icons.more_vert, color: Colors.white),
                 onPressed: () {
                   // TODO: Add more options
@@ -88,7 +95,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
                       widget.taskList.name,
                       style: const TextStyle(
                         fontSize: 28,
@@ -96,6 +106,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         color: Colors.white,
                         letterSpacing: -0.5,
                       ),
+                          ),
+                        ),
+                        if (appProvider.isLoading || _isLoading)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0078D4)),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     if (tasks.isNotEmpty)
@@ -138,6 +160,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       child: TextField(
                         controller: _taskController,
                         style: const TextStyle(color: Colors.white),
+                        enabled: !_isLoading && !appProvider.isLoading,
                         decoration: const InputDecoration(
                           hintText: 'Add a task',
                           hintStyle: TextStyle(color: Color(0xFF808080)),
@@ -160,7 +183,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                           color: Color(0xFF0078D4),
                           size: 20,
                         ),
-                        onPressed: () {
+                        onPressed: (_isLoading || appProvider.isLoading) ? null : () {
                           _addTask(appProvider, _taskController.text);
                         },
                       ),
@@ -170,7 +193,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                           color: Color(0xFF808080),
                           size: 20,
                         ),
-                        onPressed: () {
+                        onPressed: (_isLoading || appProvider.isLoading) ? null : () {
                           setState(() {
                             _isAddingTask = false;
                             _taskController.clear();
@@ -230,7 +253,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
           onTap: () {
-            // TODO: Show task details
+            _showTaskDetails(context, task, appProvider);
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -238,8 +261,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
               children: [
                 // Checkbox
                 GestureDetector(
-                  onTap: () {
-                    appProvider.toggleTaskCompletion(task.id);
+                  onTap: (_isLoading || appProvider.isLoading) ? null : () async {
+                    await _toggleTaskCompletion(task, appProvider);
                   },
                   child: Container(
                     width: 20,
@@ -351,15 +374,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     size: 20,
                   ),
                   color: const Color(0xFF2D2D2D),
-                  onSelected: (value) {
+                  enabled: !_isLoading && !appProvider.isLoading,
+                  onSelected: (value) async {
                     switch (value) {
                       case 'important':
-                        appProvider.updateTask(task.copyWith(
-                          isImportant: !task.isImportant,
-                        ));
+                        await _toggleTaskImportance(task, appProvider);
                         break;
                       case 'delete':
-                        appProvider.deleteTask(task.id);
+                        await _deleteTask(task, appProvider);
                         break;
                     }
                   },
@@ -463,17 +485,271 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
-  void _addTask(AppProvider appProvider, String title) {
+  Future<void> _addTask(AppProvider appProvider, String title) async {
     if (title.trim().isNotEmpty) {
-      appProvider.addTask(
+      setState(() {
+        _isLoading = true;
+      });
+
+      final success = await appProvider.addTask(
         title.trim(),
         widget.taskList.id,
       );
-      _taskController.clear();
+
       setState(() {
-        _isAddingTask = false;
+        _isLoading = false;
       });
+
+      if (success) {
+        _taskController.clear();
+        setState(() {
+          _isAddingTask = false;
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to add task. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
+  }
+
+  Future<void> _toggleTaskCompletion(Task task, AppProvider appProvider) async {
+    final success = await appProvider.toggleTaskCompletion(task.id);
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to update task. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleTaskImportance(Task task, AppProvider appProvider) async {
+    final success = await appProvider.toggleTaskImportance(task.id);
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to update task. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteTask(Task task, AppProvider appProvider) async {
+    final success = await appProvider.deleteTask(task.id);
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to delete task. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showTaskDetails(BuildContext context, Task task, AppProvider appProvider) {
+    final titleController = TextEditingController(text: task.title);
+    final noteController = TextEditingController(text: task.note ?? '');
+    DateTime? selectedDate = task.dueDate;
+    bool isImportant = task.isImportant;
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: const Color(0xFF2D2D2D),
+          title: const Text(
+            'Edit Task',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Task title',
+                    labelStyle: TextStyle(color: Color(0xFF808080)),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF404040)),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF0078D4)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: noteController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Note (optional)',
+                    labelStyle: TextStyle(color: Color(0xFF808080)),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF404040)),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF0078D4)),
+                    ),
+                  ),
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: isImportant,
+                      onChanged: isLoading ? null : (value) {
+                        setState(() {
+                          isImportant = value ?? false;
+                        });
+                      },
+                      activeColor: const Color(0xFFFFB900),
+                    ),
+                    const Text(
+                      'Mark as important',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                InkWell(
+                  onTap: isLoading ? null : () async {
+                    final DateTime? picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate ?? DateTime.now(),
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime(2030),
+                      builder: (context, child) {
+                        return Theme(
+                          data: Theme.of(context).copyWith(
+                            colorScheme: const ColorScheme.dark(
+                              primary: Color(0xFF0078D4),
+                              surface: Color(0xFF2D2D2D),
+                              background: Color(0xFF1E1E1E),
+                            ),
+                          ),
+                          child: child!,
+                        );
+                      },
+                    );
+                    if (picked != null) {
+                      setState(() {
+                        selectedDate = picked;
+                      });
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: const BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xFF404040)),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.calendar_today,
+                          color: Color(0xFF808080),
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          selectedDate != null
+                              ? 'Due: ${_formatDate(selectedDate!)}'
+                              : 'Set due date',
+                          style: const TextStyle(
+                            color: Color(0xFF808080),
+                            fontSize: 16,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (selectedDate != null)
+                          GestureDetector(
+                            onTap: isLoading ? null : () {
+                              setState(() {
+                                selectedDate = null;
+                              });
+                            },
+                            child: const Icon(
+                              Icons.close,
+                              color: Color(0xFF808080),
+                              size: 16,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF808080)),
+              ),
+            ),
+            TextButton(
+              onPressed: isLoading ? null : () async {
+                if (titleController.text.trim().isNotEmpty) {
+                  setState(() {
+                    isLoading = true;
+                  });
+
+                  final updatedTask = task.copyWith(
+                    title: titleController.text.trim(),
+                    note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                    dueDate: selectedDate,
+                    isImportant: isImportant,
+                  );
+
+                  final success = await appProvider.updateTask(updatedTask);
+
+                  if (success) {
+                    Navigator.of(context).pop();
+                  } else {
+                    setState(() {
+                      isLoading = false;
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Failed to update task. Please try again.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0078D4)),
+                      ),
+                    )
+                  : const Text(
+                      'Save',
+                      style: TextStyle(color: Color(0xFF0078D4)),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _formatDate(DateTime date) {

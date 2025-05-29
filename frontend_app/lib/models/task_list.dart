@@ -37,7 +37,7 @@ class TaskList {
 
   Map<String, dynamic> toJson() {
     return {
-      'id': id,
+      '_id': id,
       'name': name,
       'icon': icon.codePoint,
       'iconColor': iconColor.value,
@@ -48,11 +48,11 @@ class TaskList {
 
   factory TaskList.fromJson(Map<String, dynamic> json) {
     return TaskList(
-      id: json['id'],
+      id: json['_id'] ?? json['id'],
       name: json['name'],
       icon: IconData(json['icon'], fontFamily: 'MaterialIcons'),
       iconColor: Color(json['iconColor']),
-      isDefault: json['isDefault'],
+      isDefault: json['isDefault'] ?? false,
       createdAt: DateTime.parse(json['createdAt']),
     );
   }

@@ -43,7 +43,7 @@ class Task {
 
   Map<String, dynamic> toJson() {
     return {
-      'id': id,
+      '_id': id,
       'title': title,
       'isCompleted': isCompleted,
       'createdAt': createdAt.toIso8601String(),
@@ -56,14 +56,16 @@ class Task {
 
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
-      id: json['id'],
+      id: json['_id'] ?? json['id'],
       title: json['title'],
-      isCompleted: json['isCompleted'],
-      createdAt: DateTime.parse(json['createdAt']),
+      isCompleted: json['isCompleted'] ?? false,
+      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
       dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
-      isImportant: json['isImportant'],
+      isImportant: json['isImportant'] ?? false,
       note: json['note'],
-      listId: json['listId'],
+      listId: json['listId'] ?? 'default',
     );
   }
+
+
 } 
