@@ -1,71 +1,109 @@
 class Task {
   final String id;
   final String title;
+  final String userId;
+  final String listId; // Backward compatibility - first list ID
+  final List<String> listIds; // New field for multiple list IDs
   final bool isCompleted;
-  final DateTime createdAt;
-  final DateTime? dueDate;
   final bool isImportant;
   final String? note;
-  final String listId;
+  final DateTime? dueDate;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   Task({
     required this.id,
     required this.title,
+    required this.userId,
+    required this.listId,
+    List<String>? listIds,
     this.isCompleted = false,
-    required this.createdAt,
-    this.dueDate,
     this.isImportant = false,
     this.note,
-    required this.listId,
-  });
+    this.dueDate,
+    this.createdAt,
+    this.updatedAt,
+  }) : listIds = listIds ?? [listId];
 
-  Task copyWith({
-    String? id,
-    String? title,
-    bool? isCompleted,
-    DateTime? createdAt,
-    DateTime? dueDate,
-    bool? isImportant,
-    String? note,
-    String? listId,
-  }) {
+  factory Task.fromJson(Map<String, dynamic> json) {
+    // Handle list_ids array
+    List<String> listIds = [];
+    if (json['list_ids'] != null) {
+      if (json['list_ids'] is List) {
+        listIds = (json['list_ids'] as List).map((e) => e.toString()).toList();
+      } else {
+        listIds = [json['list_ids'].toString()];
+      }
+    }
+    
+    // Backward compatibility - get primary listId
+    String listId = '';
+    if (listIds.isNotEmpty) {
+      listId = listIds.first;
+    } else if (json['list_id'] != null) {
+      listId = json['list_id'].toString();
+      listIds = [listId];
+    } else if (json['listId'] != null) {
+      listId = json['listId'].toString();
+      listIds = [listId];
+    }
+
     return Task(
-      id: id ?? this.id,
-      title: title ?? this.title,
-      isCompleted: isCompleted ?? this.isCompleted,
-      createdAt: createdAt ?? this.createdAt,
-      dueDate: dueDate ?? this.dueDate,
-      isImportant: isImportant ?? this.isImportant,
-      note: note ?? this.note,
-      listId: listId ?? this.listId,
+      id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      userId: json['user_id']?.toString() ?? json['userId']?.toString() ?? '',
+      listId: listId,
+      listIds: listIds,
+      isCompleted: json['isCompleted'] == true || json['is_completed'] == true,
+      isImportant: json['isImportant'] == true || json['is_important'] == true,
+      note: json['note']?.toString(),
+      dueDate: json['dueDate'] != null ? DateTime.tryParse(json['dueDate'].toString()) : 
+               json['due_date'] != null ? DateTime.tryParse(json['due_date'].toString()) : null,
+      createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt'].toString()) : 
+                 json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
+      updatedAt: json['updatedAt'] != null ? DateTime.tryParse(json['updatedAt'].toString()) : 
+                 json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
-      '_id': id,
       'title': title,
+      'listId': listId,
+      'list_ids': listIds,
       'isCompleted': isCompleted,
-      'createdAt': createdAt.toIso8601String(),
-      'dueDate': dueDate?.toIso8601String(),
       'isImportant': isImportant,
       'note': note,
-      'listId': listId,
+      'dueDate': dueDate?.toIso8601String(),
     };
   }
 
-  factory Task.fromJson(Map<String, dynamic> json) {
+  Task copyWith({
+    String? title,
+    List<String>? listIds,
+    bool? isCompleted,
+    bool? isImportant,
+    String? note,
+    DateTime? dueDate,
+  }) {
+    final newListIds = listIds ?? this.listIds;
     return Task(
-      id: json['_id'] ?? json['id'],
-      title: json['title'],
-      isCompleted: json['isCompleted'] ?? false,
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
-      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
-      isImportant: json['isImportant'] ?? false,
-      note: json['note'],
-      listId: json['listId'] ?? 'default',
+      id: id,
+      title: title ?? this.title,
+      userId: userId,
+      listId: newListIds.isNotEmpty ? newListIds.first : this.listId,
+      listIds: newListIds,
+      isCompleted: isCompleted ?? this.isCompleted,
+      isImportant: isImportant ?? this.isImportant,
+      note: note ?? this.note,
+      dueDate: dueDate ?? this.dueDate,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
     );
   }
 
-
+  // Helper method to check if task is in a specific list
+  bool isInList(String checkListId) {
+    return listIds.contains(checkListId);
+  }
 } 

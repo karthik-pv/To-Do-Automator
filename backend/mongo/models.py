@@ -89,6 +89,18 @@ class Task:
             if "isImportant" not in task_data:
                 task_data["isImportant"] = False
 
+            # Handle list_ids as array - ensure it's always an array
+            if "list_id" in task_data:
+                # Convert single list_id to array for backward compatibility
+                task_data["list_ids"] = [task_data["list_id"]]
+                del task_data["list_id"]
+            elif "list_ids" not in task_data:
+                # Default to 'my-tasks' if no list specified
+                task_data["list_ids"] = ["my-tasks"]
+            elif not isinstance(task_data["list_ids"], list):
+                # Ensure list_ids is always an array
+                task_data["list_ids"] = [task_data["list_ids"]]
+
             result = self.collection.insert_one(task_data)
             return str(result.inserted_id)
         except Exception as e:
@@ -100,11 +112,18 @@ class Task:
         try:
             query = {"user_id": user_id}
             if list_id:
-                query["list_id"] = list_id
+                # Check if list_id is in the list_ids array
+                query["list_ids"] = {"$in": [list_id]}
 
             tasks = list(self.collection.find(query))
             for task in tasks:
                 task["_id"] = str(task["_id"])
+                # Ensure backward compatibility - add list_id field from first list_ids entry
+                if "list_ids" in task and task["list_ids"]:
+                    task["list_id"] = task["list_ids"][0]
+                elif "list_id" not in task:
+                    task["list_id"] = "my-tasks"
+                    task["list_ids"] = ["my-tasks"]
             return tasks
         except Exception as e:
             print(f"Error getting tasks: {e}")
@@ -118,6 +137,12 @@ class Task:
             )
             if task:
                 task["_id"] = str(task["_id"])
+                # Ensure backward compatibility
+                if "list_ids" in task and task["list_ids"]:
+                    task["list_id"] = task["list_ids"][0]
+                elif "list_id" not in task:
+                    task["list_id"] = "my-tasks"
+                    task["list_ids"] = ["my-tasks"]
                 return task
             return None
         except Exception as e:
@@ -128,6 +153,19 @@ class Task:
         """Update a task"""
         try:
             update_data["updated_at"] = datetime.utcnow()
+
+            # Handle list_ids updates
+            if "list_id" in update_data:
+                # Convert single list_id to array for backward compatibility
+                if "list_ids" not in update_data:
+                    update_data["list_ids"] = [update_data["list_id"]]
+                del update_data["list_id"]
+            elif "list_ids" in update_data and not isinstance(
+                update_data["list_ids"], list
+            ):
+                # Ensure list_ids is always an array
+                update_data["list_ids"] = [update_data["list_ids"]]
+
             result = self.collection.update_one(
                 {"_id": ObjectId(task_id), "user_id": user_id}, {"$set": update_data}
             )
@@ -145,6 +183,52 @@ class Task:
             return result.deleted_count > 0
         except Exception as e:
             print(f"Error deleting task: {e}")
+            return False
+
+    def delete_multiple_tasks(self, task_ids, user_id):
+        """Delete multiple tasks"""
+        try:
+            object_ids = [ObjectId(task_id) for task_id in task_ids]
+            result = self.collection.delete_many(
+                {"_id": {"$in": object_ids}, "user_id": user_id}
+            )
+            return result.deleted_count
+        except Exception as e:
+            print(f"Error deleting multiple tasks: {e}")
+            return 0
+
+    def add_task_to_list(self, task_id, user_id, list_id):
+        """Add a task to an additional list"""
+        try:
+            result = self.collection.update_one(
+                {"_id": ObjectId(task_id), "user_id": user_id},
+                {"$addToSet": {"list_ids": list_id}},
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error adding task to list: {e}")
+            return False
+
+    def remove_task_from_list(self, task_id, user_id, list_id):
+        """Remove a task from a specific list (but keep in other lists)"""
+        try:
+            # Get the task first to check current list_ids
+            task = self.get_task_by_id(task_id, user_id)
+            if not task:
+                return False
+
+            current_list_ids = task.get("list_ids", [])
+            if len(current_list_ids) <= 1:
+                # Don't remove if it's the only list - would orphan the task
+                return False
+
+            result = self.collection.update_one(
+                {"_id": ObjectId(task_id), "user_id": user_id},
+                {"$pull": {"list_ids": list_id}},
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error removing task from list: {e}")
             return False
 
     def get_important_tasks(self, user_id):
@@ -291,16 +375,23 @@ class TaskList:
         try:
             default_lists = [
                 {
-                    "name": "Tasks",
-                    "icon": "home_outlined",
-                    "iconColor": 0xFF0078D4,
+                    "name": "My Day",
+                    "icon": "wb_sunny_outlined",
+                    "iconColor": 0xFFFFB900,
                     "isDefault": True,
                     "user_id": user_id,
                 },
                 {
-                    "name": "My Day",
-                    "icon": "wb_sunny_outlined",
-                    "iconColor": 0xFFFFB900,
+                    "name": "Important",
+                    "icon": "star_border",
+                    "iconColor": 0xFFD13438,
+                    "isDefault": True,
+                    "user_id": user_id,
+                },
+                {
+                    "name": "Tasks",
+                    "icon": "home_outlined",
+                    "iconColor": 0xFF0078D4,
                     "isDefault": True,
                     "user_id": user_id,
                 },

@@ -178,11 +178,37 @@ def create_task():
         if not data or "title" not in data:
             return jsonify({"success": False, "message": "Task title is required"}), 400
 
-        # Create task data with user_id
+        # Handle list_ids - ensure task appears in both the specific list and "Tasks" list
+        list_ids = []
+        if "listId" in data and data["listId"]:
+            list_ids.append(data["listId"])
+        elif "list_ids" in data and data["list_ids"]:
+            list_ids = (
+                data["list_ids"]
+                if isinstance(data["list_ids"], list)
+                else [data["list_ids"]]
+            )
+
+        # Always add to the main "Tasks" list (find the actual ID for the Tasks list)
+        tasks_lists = data_handler.get_task_lists(user_id)
+        tasks_list_id = None
+        for task_list in tasks_lists:
+            if task_list.get("name") == "Tasks" or task_list.get("id") == "my-tasks":
+                tasks_list_id = task_list.get("_id") or task_list.get("id")
+                break
+
+        if tasks_list_id and tasks_list_id not in list_ids:
+            list_ids.append(tasks_list_id)
+
+        # If no list specified, default to Tasks list
+        if not list_ids:
+            list_ids = ["my-tasks"]
+
+        # Create task data with user_id and list_ids
         task_data = {
             "title": data["title"],
             "user_id": user_id,
-            "listId": data.get("listId", "my-tasks"),
+            "list_ids": list_ids,
             "isCompleted": data.get("isCompleted", False),
             "isImportant": data.get("isImportant", False),
             "note": data.get("note"),
@@ -350,6 +376,46 @@ def delete_task(task_id):
         return jsonify({"success": False, "message": "Internal server error"}), 500
 
 
+@app.route("/tasks/bulk-delete", methods=["DELETE"])
+def delete_multiple_tasks():
+    """Delete multiple tasks"""
+    try:
+        user_id = get_user_id_from_headers()
+        if not user_id:
+            return (
+                jsonify({"success": False, "message": "User authentication required"}),
+                401,
+            )
+
+        data = request.get_json()
+        if not data or "taskIds" not in data or not data["taskIds"]:
+            return jsonify({"success": False, "message": "Task IDs are required"}), 400
+
+        task_ids = data["taskIds"]
+        if not isinstance(task_ids, list):
+            return (
+                jsonify({"success": False, "message": "Task IDs must be an array"}),
+                400,
+            )
+
+        deleted_count = data_handler.delete_multiple_tasks(task_ids, user_id)
+
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": f"{deleted_count} tasks deleted successfully",
+                    "deletedCount": deleted_count,
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        print(f"Delete multiple tasks error: {e}")
+        return jsonify({"success": False, "message": "Internal server error"}), 500
+
+
 @app.route("/tasks/<task_id>/complete", methods=["PUT"])
 def toggle_task_completion(task_id):
     """Toggle task completion status"""
@@ -420,9 +486,28 @@ def toggle_task_importance(task_id):
 
         is_important = data["isImportant"]
 
+        # Update the task's importance status
         success = data_handler.mark_task_important(task_id, user_id, is_important)
 
         if success:
+            # Find the Important list ID
+            task_lists = data_handler.get_task_lists(user_id)
+            important_list_id = None
+            for task_list in task_lists:
+                if task_list.get("name") == "Important" and task_list.get("isDefault"):
+                    important_list_id = task_list.get("_id")
+                    break
+
+            if important_list_id:
+                if is_important:
+                    # Add task to Important list
+                    data_handler.add_task_to_list(task_id, user_id, important_list_id)
+                else:
+                    # Remove task from Important list (but keep in other lists)
+                    data_handler.remove_task_from_list(
+                        task_id, user_id, important_list_id
+                    )
+
             return (
                 jsonify(
                     {
@@ -445,6 +530,62 @@ def toggle_task_importance(task_id):
 
     except Exception as e:
         print(f"Toggle task importance error: {e}")
+        return jsonify({"success": False, "message": "Internal server error"}), 500
+
+
+@app.route("/tasks/add-to-lists", methods=["POST"])
+def add_tasks_to_lists():
+    """Add multiple tasks to one or more lists"""
+    try:
+        user_id = get_user_id_from_headers()
+        if not user_id:
+            return (
+                jsonify({"success": False, "message": "User authentication required"}),
+                401,
+            )
+
+        data = request.get_json()
+        if not data or "taskIds" not in data or "listIds" not in data:
+            return (
+                jsonify(
+                    {"success": False, "message": "Task IDs and List IDs are required"}
+                ),
+                400,
+            )
+
+        task_ids = data["taskIds"]
+        list_ids = data["listIds"]
+
+        if not isinstance(task_ids, list) or not isinstance(list_ids, list):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Task IDs and List IDs must be arrays",
+                    }
+                ),
+                400,
+            )
+
+        success_count = 0
+        for task_id in task_ids:
+            for list_id in list_ids:
+                if data_handler.add_task_to_list(task_id, user_id, list_id):
+                    success_count += 1
+
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": f"Successfully added tasks to lists",
+                    "addedCount": success_count,
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        print(f"Add tasks to lists error: {e}")
         return jsonify({"success": False, "message": "Internal server error"}), 500
 
 

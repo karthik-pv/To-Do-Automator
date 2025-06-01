@@ -90,9 +90,33 @@ class DataHandler:
         try:
             # Convert datetime fields if needed
             if "dueDate" in updates and updates["dueDate"]:
-                updates["dueDate"] = datetime.fromisoformat(
-                    updates["dueDate"].replace("Z", "+00:00")
-                )
+                # Handle different date formats
+                if isinstance(updates["dueDate"], str):
+                    try:
+                        # Try to parse ISO format with Z
+                        if updates["dueDate"].endswith("Z"):
+                            updates["dueDate"] = datetime.fromisoformat(
+                                updates["dueDate"].replace("Z", "+00:00")
+                            )
+                        else:
+                            # Try regular ISO format
+                            updates["dueDate"] = datetime.fromisoformat(
+                                updates["dueDate"]
+                            )
+                    except ValueError:
+                        # If parsing fails, remove the dueDate to avoid errors
+                        print(f"Invalid date format: {updates['dueDate']}")
+                        updates.pop("dueDate", None)
+                elif isinstance(updates["dueDate"], datetime):
+                    # Already a datetime object, keep as is
+                    pass
+                else:
+                    # Unknown format, remove it
+                    updates.pop("dueDate", None)
+            elif "dueDate" in updates and updates["dueDate"] is None:
+                # Explicitly setting to None (clearing due date)
+                updates["dueDate"] = None
+
             return self.task_model.update_task(task_id, user_id, updates)
         except Exception as e:
             print(f"Error updating task: {e}")
@@ -105,6 +129,14 @@ class DataHandler:
         except Exception as e:
             print(f"Error deleting task: {e}")
             return False
+
+    def delete_multiple_tasks(self, task_ids: List[str], user_id: str) -> int:
+        """Delete multiple tasks, ensuring they belong to the user"""
+        try:
+            return self.task_model.delete_multiple_tasks(task_ids, user_id)
+        except Exception as e:
+            print(f"Error deleting multiple tasks: {e}")
+            return 0
 
     def mark_task_completed(
         self, task_id: str, user_id: str, is_completed: bool = True
@@ -121,6 +153,22 @@ class DataHandler:
         return self.task_model.update_task(
             task_id, user_id, {"isImportant": is_important}
         )
+
+    def add_task_to_list(self, task_id: str, user_id: str, list_id: str) -> bool:
+        """Add a task to an additional list"""
+        try:
+            return self.task_model.add_task_to_list(task_id, user_id, list_id)
+        except Exception as e:
+            print(f"Error adding task to list: {e}")
+            return False
+
+    def remove_task_from_list(self, task_id: str, user_id: str, list_id: str) -> bool:
+        """Remove a task from a specific list (but keep in other lists)"""
+        try:
+            return self.task_model.remove_task_from_list(task_id, user_id, list_id)
+        except Exception as e:
+            print(f"Error removing task from list: {e}")
+            return False
 
     # ==================== TASK LIST OPERATIONS ====================
 

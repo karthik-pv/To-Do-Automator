@@ -1,56 +1,38 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/task.dart';
 import '../models/task_list.dart';
+import '../models/user.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://127.0.0.1:5000';
-  static String? _userId;
+  static const String baseUrl = 'http://localhost:5000'; // Change this to your server URL
   
-  // Set user ID for authentication
-  static void setUserId(String userId) {
-    _userId = userId;
-    print('ApiService: Set user ID to $_userId');
+  static Future<String?> getUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_id');
   }
-  
-  // Clear user ID on logout
-  static void clearUserId() {
-    print('ApiService: Clearing user ID (was $_userId)');
-    _userId = null;
+
+  static Future<void> saveUserId(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_id', userId);
   }
-  
-  // Get headers with authentication
-  static Map<String, String> _getHeaders() {
-    final headers = {'Content-Type': 'application/json'};
-    if (_userId != null) {
-      headers['X-User-ID'] = _userId!;
-      print('ApiService: Using authenticated headers with user ID $_userId');
-    } else {
-      print('ApiService: Using unauthenticated headers (no user ID)');
-    }
-    return headers;
+
+  static Future<void> clearUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('user_id');
   }
-  
-  // Helper method to handle API responses
-  static Map<String, dynamic> _handleResponse(http.Response response, String operation) {
-    if (response.statusCode == 401) {
-      throw Exception('Authentication failed - please login again');
-    }
-    
-    if (response.statusCode >= 500) {
-      throw Exception('Server error - please try again later');
-    }
-    
-    try {
-      final data = jsonDecode(response.body);
-      return data;
-    } catch (e) {
-      throw Exception('Invalid response from server during $operation');
-    }
+
+  static Future<Map<String, String>> _getHeaders() async {
+    final userId = await getUserId();
+    return {
+      'Content-Type': 'application/json',
+      if (userId != null) 'X-User-ID': userId,
+    };
   }
-  
-  // Authentication API calls
-  static Future<Map<String, dynamic>?> register(String email, String password) async {
+
+  // Auth endpoints
+  static Future<User?> register(String email, String password) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
@@ -59,38 +41,23 @@ class ApiService {
           'email': email,
           'password': password,
         }),
-      ).timeout(Duration(seconds: 10));
-      
-      final data = _handleResponse(response, 'registration');
-      
-      if (response.statusCode == 201 && data['success']) {
-        return {
-          'success': true,
-          'userId': data['userId'],
-          'message': data['message'],
-        };
-      } else {
-        return {
-          'success': false,
-          'message': data['message'] ?? 'Registration failed',
-        };
+      );
+
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        if (data['success']) {
+          await saveUserId(data['userId']);
+          return User(id: data['userId'], email: email);
+        }
       }
+      return null;
     } catch (e) {
-      print('Error registering user: $e');
-      if (e.toString().contains('TimeoutException')) {
-        return {
-          'success': false,
-          'message': 'Connection timeout - please check your internet connection',
-        };
-      }
-      return {
-        'success': false,
-        'message': 'Network error: Unable to connect to server',
-      };
+      print('Registration error: $e');
+      return null;
     }
   }
-  
-  static Future<Map<String, dynamic>?> login(String email, String password) async {
+
+  static Future<User?> login(String email, String password) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
@@ -99,64 +66,127 @@ class ApiService {
           'email': email,
           'password': password,
         }),
-      ).timeout(Duration(seconds: 10));
-      
-      final data = _handleResponse(response, 'login');
-      
-      if (response.statusCode == 200 && data['success']) {
-        return {
-          'success': true,
-          'userId': data['userId'],
-          'email': data['email'],
-          'message': data['message'],
-        };
-      } else {
-        return {
-          'success': false,
-          'message': data['message'] ?? 'Login failed',
-        };
-      }
-    } catch (e) {
-      print('Error logging in: $e');
-      if (e.toString().contains('TimeoutException')) {
-        return {
-          'success': false,
-          'message': 'Connection timeout - please check your internet connection',
-        };
-      }
-      return {
-        'success': false,
-        'message': 'Network error: Unable to connect to server',
-      };
-    }
-  }
-  
-  // Task API calls
-  static Future<String?> createTask(Task task) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/tasks'),
-        headers: _getHeaders(),
-        body: jsonEncode(task.toJson()),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 201) {
+      );
+
+      if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['taskId'];
+        if (data['success']) {
+          await saveUserId(data['userId']);
+          return User(id: data['userId'], email: data['email']);
+        }
       }
       return null;
     } catch (e) {
-      print('Error creating task: $e');
-      rethrow; // Re-throw to let caller handle authentication errors
+      print('Login error: $e');
+      return null;
     }
   }
-  
+
+  // Task List endpoints
+  static Future<List<TaskList>> getTaskLists() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/task-lists'),
+        headers: headers,
+      );
+
+      print('Get task lists response status: ${response.statusCode}');
+      print('Get task lists response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success']) {
+          print('Task lists data: ${data['taskLists']}');
+          final taskLists = (data['taskLists'] as List)
+              .map((json) {
+                print('Processing task list JSON: $json');
+                return TaskList.fromJson(json);
+              })
+              .toList();
+          print('Parsed ${taskLists.length} task lists');
+          return taskLists;
+        }
+      }
+      return [];
+    } catch (e) {
+      print('Get task lists error: $e');
+      print('Error type: ${e.runtimeType}');
+      if (e is TypeError) {
+        print('TypeError details: $e');
+      }
+      return [];
+    }
+  }
+
+  static Future<TaskList?> createTaskList(String name, String icon, int iconColor, {bool isDefault = false}) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/task-lists'),
+        headers: headers,
+        body: jsonEncode({
+          'name': name,
+          'icon': icon,
+          'iconColor': iconColor,
+          'isDefault': isDefault,
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        if (data['success']) {
+          // Fetch the created list
+          final lists = await getTaskLists();
+          return lists.firstWhere((list) => list.id == data['listId']);
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Create task list error: $e');
+      return null;
+    }
+  }
+
+  static Future<bool> updateTaskList(String listId, String name, String icon, int iconColor) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/task-lists/$listId'),
+        headers: headers,
+        body: jsonEncode({
+          'name': name,
+          'icon': icon,
+          'iconColor': iconColor,
+        }),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Update task list error: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> deleteTaskList(String listId) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/task-lists/$listId'),
+        headers: headers,
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Delete task list error: $e');
+      return false;
+    }
+  }
+
+  // Task endpoints
   static Future<List<Task>> getTasks({String? listId}) async {
     try {
+      final headers = await _getHeaders();
       String url = '$baseUrl/tasks';
       if (listId != null) {
         url += '?listId=$listId';
@@ -164,379 +194,186 @@ class ApiService {
       
       final response = await http.get(
         Uri.parse(url),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
+        headers: headers,
+      );
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success']) {
-          final List<dynamic> tasksData = data['tasks'];
-          return tasksData.map((json) => Task.fromJson(json)).toList();
+          return (data['tasks'] as List)
+              .map((json) => Task.fromJson(json))
+              .toList();
         }
       }
-      
-      // If we get here and status is not 200, throw an error
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load tasks: HTTP ${response.statusCode}');
-      }
-      
       return [];
     } catch (e) {
-      print('Error getting tasks: $e');
-      rethrow; // Re-throw to let caller handle authentication errors
+      print('Get tasks error: $e');
+      return [];
     }
   }
-  
-  static Future<Task?> getTask(String taskId) async {
+
+  static Future<Task?> createTask(String title, String listId, {String? note, DateTime? dueDate, bool isImportant = false}) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/tasks/$taskId'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success']) {
-          return Task.fromJson(data['task']);
-        }
-      }
-      return null;
-    } catch (e) {
-      print('Error getting task: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<bool> updateTask(String taskId, Map<String, dynamic> updates) async {
-    try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/tasks/$taskId'),
-        headers: _getHeaders(),
-        body: jsonEncode(updates),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
-    } catch (e) {
-      print('Error updating task: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<bool> deleteTask(String taskId) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/tasks/$taskId'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
-    } catch (e) {
-      print('Error deleting task: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<bool> markTaskCompleted(String taskId, bool isCompleted) async {
-    try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/tasks/$taskId/complete'),
-        headers: _getHeaders(),
-        body: jsonEncode({'isCompleted': isCompleted}),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
-    } catch (e) {
-      print('Error marking task completed: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<bool> markTaskImportant(String taskId, bool isImportant) async {
-    try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/tasks/$taskId/important'),
-        headers: _getHeaders(),
-        body: jsonEncode({'isImportant': isImportant}),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
-    } catch (e) {
-      print('Error marking task important: $e');
-      rethrow;
-    }
-  }
-  
-  // TaskList API calls
-  static Future<String?> createTaskList(TaskList taskList) async {
-    try {
+      final headers = await _getHeaders();
       final response = await http.post(
-        Uri.parse('$baseUrl/task-lists'),
-        headers: _getHeaders(),
-        body: jsonEncode(taskList.toJson()),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
+        Uri.parse('$baseUrl/tasks'),
+        headers: headers,
+        body: jsonEncode({
+          'title': title,
+          'listId': listId,
+          'note': note,
+          'dueDate': dueDate?.toIso8601String(),
+          'isImportant': isImportant,
+        }),
+      );
+
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
-        return data['listId'];
-      }
-      return null;
-    } catch (e) {
-      print('Error creating task list: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<List<TaskList>> getTaskLists({bool defaultOnly = false}) async {
-    try {
-      String url = '$baseUrl/task-lists';
-      if (defaultOnly) {
-        url += '?defaultOnly=true';
-      }
-      
-      final response = await http.get(
-        Uri.parse(url),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
         if (data['success']) {
-          final List<dynamic> listsData = data['taskLists'];
-          return listsData.map((json) => TaskList.fromJson(json)).toList();
-        }
-      }
-      
-      // If we get here and status is not 200, throw an error
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load task lists: HTTP ${response.statusCode}');
-      }
-      
-      return [];
-    } catch (e) {
-      print('Error getting task lists: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<TaskList?> getTaskList(String listId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/task-lists/$listId'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success']) {
-          return TaskList.fromJson(data['taskList']);
+          // Fetch the created task
+          final tasks = await getTasks(listId: listId);
+          return tasks.firstWhere((task) => task.id == data['taskId']);
         }
       }
       return null;
     } catch (e) {
-      print('Error getting task list: $e');
-      rethrow;
+      print('Create task error: $e');
+      return null;
     }
   }
-  
-  static Future<bool> updateTaskList(String listId, Map<String, dynamic> updates) async {
+
+  static Future<bool> updateTask(String taskId, {String? title, String? note, DateTime? dueDate, bool? isImportant, bool? isCompleted}) async {
     try {
+      final headers = await _getHeaders();
+      final Map<String, dynamic> body = {};
+      
+      if (title != null) body['title'] = title;
+      if (note != null) body['note'] = note;
+      if (dueDate != null) body['dueDate'] = dueDate.toIso8601String();
+      if (isImportant != null) body['isImportant'] = isImportant;
+      if (isCompleted != null) body['isCompleted'] = isCompleted;
+
       final response = await http.put(
-        Uri.parse('$baseUrl/task-lists/$listId'),
-        headers: _getHeaders(),
-        body: jsonEncode(updates),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
+        Uri.parse('$baseUrl/tasks/$taskId'),
+        headers: headers,
+        body: jsonEncode(body),
+      );
+
+      return response.statusCode == 200;
     } catch (e) {
-      print('Error updating task list: $e');
-      rethrow;
+      print('Update task error: $e');
+      return false;
     }
   }
-  
-  static Future<bool> deleteTaskList(String listId) async {
+
+  static Future<bool> deleteTask(String taskId) async {
     try {
+      final headers = await _getHeaders();
       final response = await http.delete(
-        Uri.parse('$baseUrl/task-lists/$listId'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['success'];
-      }
-      return false;
+        Uri.parse('$baseUrl/tasks/$taskId'),
+        headers: headers,
+      );
+
+      return response.statusCode == 200;
     } catch (e) {
-      print('Error deleting task list: $e');
-      rethrow;
+      print('Delete task error: $e');
+      return false;
     }
   }
-  
-  // Utility API calls
+
+  static Future<int> deleteMultipleTasks(List<String> taskIds) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/tasks/bulk-delete'),
+        headers: headers,
+        body: jsonEncode({'taskIds': taskIds}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success']) {
+          return data['deletedCount'] ?? 0;
+        }
+      }
+      return 0;
+    } catch (e) {
+      print('Delete multiple tasks error: $e');
+      return 0;
+    }
+  }
+
+  static Future<bool> toggleTaskCompletion(String taskId, bool isCompleted) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/tasks/$taskId/complete'),
+        headers: headers,
+        body: jsonEncode({'isCompleted': isCompleted}),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Toggle task completion error: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> toggleTaskImportance(String taskId, bool isImportant) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/tasks/$taskId/important'),
+        headers: headers,
+        body: jsonEncode({'isImportant': isImportant}),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Toggle task importance error: $e');
+      return false;
+    }
+  }
+
   static Future<List<Task>> getImportantTasks() async {
     try {
+      final headers = await _getHeaders();
       final response = await http.get(
         Uri.parse('$baseUrl/tasks/important'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
+        headers: headers,
+      );
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success']) {
-          final List<dynamic> tasksData = data['tasks'];
-          return tasksData.map((json) => Task.fromJson(json)).toList();
+          return (data['tasks'] as List)
+              .map((json) => Task.fromJson(json))
+              .toList();
         }
       }
       return [];
     } catch (e) {
-      print('Error getting important tasks: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<List<Task>> getCompletedTasks() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/tasks/completed'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success']) {
-          final List<dynamic> tasksData = data['tasks'];
-          return tasksData.map((json) => Task.fromJson(json)).toList();
-        }
-      }
+      print('Get important tasks error: $e');
       return [];
-    } catch (e) {
-      print('Error getting completed tasks: $e');
-      rethrow;
     }
   }
-  
-  static Future<List<Task>> searchTasks(String searchTerm) async {
+
+  static Future<bool> addTasksToLists(List<String> taskIds, List<String> listIds) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/tasks/search?q=${Uri.encodeComponent(searchTerm)}'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success']) {
-          final List<dynamic> tasksData = data['tasks'];
-          return tasksData.map((json) => Task.fromJson(json)).toList();
-        }
-      }
-      return [];
+      final headers = await _getHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/tasks/add-to-lists'),
+        headers: headers,
+        body: jsonEncode({
+          'taskIds': taskIds,
+          'listIds': listIds,
+        }),
+      );
+
+      return response.statusCode == 200;
     } catch (e) {
-      print('Error searching tasks: $e');
-      rethrow;
-    }
-  }
-  
-  static Future<Map<String, int>?> getListStats(String listId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/task-lists/$listId/stats'),
-        headers: _getHeaders(),
-      ).timeout(Duration(seconds: 10));
-      
-      if (response.statusCode == 401) {
-        throw Exception('Authentication failed - please login again');
-      }
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success']) {
-          final stats = data['stats'];
-          return {
-            'totalTasks': stats['totalTasks'],
-            'completedTasks': stats['completedTasks'],
-            'pendingTasks': stats['pendingTasks'],
-          };
-        }
-      }
-      return null;
-    } catch (e) {
-      print('Error getting list stats: $e');
-      rethrow;
+      print('Add tasks to lists error: $e');
+      return false;
     }
   }
 } 
